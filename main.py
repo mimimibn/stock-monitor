@@ -1,8 +1,10 @@
 import yfinance as yf
+import investpy
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 import os
+import time
 
 def get_stock_data_and_send_email():
     # --- 1. 获取股票数据 (用于计算均线) ---
@@ -18,32 +20,53 @@ def get_stock_data_and_send_email():
         current_price = hist_data['Close'].iloc[-1]
         date_str = hist_data.index[-1].strftime('%Y-%m-%d')
 
-        # --- 2. 获取 PE 数据 (改用 QQQ 的 PE) ---
-        # 原因：^NDX 是指数，没有 PE 字段。QQQ 是追踪该指数的 ETF，有 PE 数据且高度相关。
-        ticker_qqq = yf.Ticker("QQQ")
-        info_qqq = ticker_qqq.info
+        # --- 2. 获取 PE 数据 (双保险方案) ---
+        current_pe = 9999 # 默认兜底值
+        pe_source = "UNKNOWN"
         
-        # 尝试获取 QQQ 的滚动市盈率
-        # 优先级：trailing_pe (新版库) > trailingPE (旧版库) > 9999 (兜底)
-        current_pe = info_qqq.get('trailing_pe') or info_qqq.get('trailingPE') or 9999
-        
-        # 调试打印
-        if current_pe == 9999:
-            print(f"⚠️ 警告：QQQ 的 PE 获取失败，当前值: {current_pe}")
-        else:
-            print(f"✅ 成功从 QQQ 获取 PE: {current_pe}")
+        # --- 方案 A: 优先尝试 Investing.com (指数真实 PE) ---
+        try:
+            print("🔍 正在尝试从 Investing.com 获取指数 PE...")
+            # 获取纳斯达克100指数统计数据
+            stats = investpy.indices.get_stock_index_statistics(index='nasdaq 100', country='united states')
+            
+            # 提取 PE 字段 (Investing.com 返回的键名通常是 'pe')
+            if 'pe' in stats and stats['pe'] is not None:
+                current_pe = float(stats['pe'])
+                pe_source = "Investing.com"
+                print(f"✅ 成功从 Investing.com 获取指数 PE: {current_pe}")
+                
+        except Exception as e_invest:
+            print(f"❌ Investing.com 获取失败: {e_invest}，正在切换到备选方案...")
+            
+            # --- 方案 B: 备选 QQQ (如果 Investing 失败) ---
+            try:
+                ticker_qqq = yf.Ticker("QQQ")
+                info_qqq = ticker_qqq.info
+                
+                # 尝试获取 QQQ 的滚动市盈率
+                # 优先级：trailing_pe (新版库) > trailingPE (旧版库)
+                qqq_pe = info_qqq.get('trailing_pe') or info_qqq.get('trailingPE')
+                
+                if qqq_pe:
+                    current_pe = qqq_pe
+                    pe_source = "QQQ ETF"
+                    print(f"✅ 成功从 QQQ 获取备选 PE: {current_pe}")
+                else:
+                    print("⚠️ 警告：QQQ 的 PE 获取失败，current_pe 保持为 9999")
+                    
+            except Exception as e_qqq:
+                print(f"❌ QQQ 获取也失败: {e_qqq}")
 
         # --- 3. 计算均线 ---
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
         hist_data['MA250'] = hist_data['Close'].rolling(window=250).mean()
-
         current_ma120 = hist_data['MA120'].iloc[-1]
         current_ma250 = hist_data['MA250'].iloc[-1]
 
         # --- 4. 计算连续跌破天数 ---
         days_below_120 = 0
         days_below_250 = 0
-
         if current_price < current_ma120:
             for i in range(len(hist_data)):
                 row = hist_data.iloc[-(i+1)]
@@ -51,7 +74,6 @@ def get_stock_data_and_send_email():
                     days_below_120 += 1
                 else:
                     break
-
         if current_price < current_ma250:
             for i in range(len(hist_data)):
                 row = hist_data.iloc[-(i+1)]
@@ -70,7 +92,6 @@ def get_stock_data_and_send_email():
             strategy_status = "【激进加仓】"
             money_amount = 800
             reasoning = f"逻辑：跌破年线且估值(PE={current_pe:.2f})进入安全区，重仓抄底。"
-        
         elif current_price < current_ma120 or (current_price < current_ma250 and current_pe >= 30):
             strategy_status = "【标准定投】"
             money_amount = 400
@@ -78,7 +99,6 @@ def get_stock_data_and_send_email():
                 reasoning = f"逻辑：虽然跌破均线，但估值(PE={current_pe:.2f})仍偏高，适度参与。"
             else:
                 reasoning = "逻辑：处于半年线下方调整期，维持标准投入。"
-        
         else:
             strategy_status = "【保守观望】"
             money_amount = 200
@@ -87,10 +107,13 @@ def get_stock_data_and_send_email():
         # --- 6. 构建邮件内容 ---
         display_pe = "数据异常" if current_pe == 9999 else f"{current_pe:.2f}"
         
+        # 在邮件中显示数据来源，方便你监控
+        pe_note = f" (来源: {pe_source})" if pe_source != "UNKNOWN" else ""
+        
         message_body = f"📅 日期: {date_str}\n"
         message_body += f"📈 标的: 纳斯达克100指数 (^NDX)\n"
         message_body += f"💰 当前点位: {current_price:.2f}\n"
-        message_body += f"📊 参考PE (来自QQQ): {display_pe}\n" # 修改文案
+        message_body += f"📊 参考PE: {display_pe}{pe_note}\n" # 修改了这里
         message_body += "-" * 40 + "\n"
         message_body += f"📉 MA250 (年线): {current_ma250:.2f} (已跌破{days_below_250}天)\n"
         message_body += f"📉 MA120 (半年线): {current_ma120:.2f} (已跌破{days_below_120}天)\n"
@@ -101,8 +124,10 @@ def get_stock_data_and_send_email():
 
         subject = f"📊 纳指100定投提醒: {strategy_status} - {money_amount}元"
         print(f"分析完成:\n{message_body}")
+        
+        # 发送邮件
         send_email(subject, message_body)
-
+        
     except Exception as e:
         error_msg = f"运行出错: {str(e)}"
         print(error_msg)
@@ -114,17 +139,17 @@ def send_email(subject, body):
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
     email_receiver = os.getenv("EMAIL_RECEIVER")
-
+    
     if not all([smtp_server, email_user, email_pass, email_receiver]):
         print("错误: 未配置完整的邮件环境变量")
         return
-
+        
     try:
         msg = MIMEText(body, 'plain', 'utf-8')
         msg['From'] = email_user
         msg['To'] = email_receiver
         msg['Subject'] = subject
-
+        
         server = smtplib.SMTP_SSL(smtp_server, smtp_port)
         server.login(email_user, email_pass)
         server.sendmail(email_user, [email_receiver], msg.as_string())
