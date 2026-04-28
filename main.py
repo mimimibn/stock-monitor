@@ -19,19 +19,50 @@ def get_stock_data_and_send_email():
         date_str = hist_data.index[-1].strftime('%Y-%m-%d')
 
         # --- 2. 获取 PE 数据 (改用 QQQ 的 PE) ---
-        # 原因：^NDX 是指数，没有 PE 字段。QQQ 是追踪该指数的 ETF，有 PE 数据且高度相关。
-        ticker_qqq = yf.Ticker("QQQ")
-        info_qqq = ticker_qqq.info
+        current_pe = 9999
+        pe_source = "UNKNOWN"
         
-        # 尝试获取 QQQ 的滚动市盈率
-        # 优先级：trailing_pe (新版库) > trailingPE (旧版库) > 9999 (兜底)
-        current_pe = info_qqq.get('trailing_pe') or info_qqq.get('trailingPE') or 9999
-        
-        # 调试打印
-        if current_pe == 9999:
-            print(f"⚠️ 警告：QQQ 的 PE 获取失败，当前值: {current_pe}")
-        else:
-            print(f"✅ 成功从 QQQ 获取 PE: {current_pe}")
+        try:
+            print("🔍 正在尝试从 Yahoo (^NDX) 获取指数 PE...")
+            
+            # 使用 yahoofinancials 获取 ^NDX 数据
+            ndx_data = YahooFinancials("^NDX")
+            
+            # 获取关键统计信息
+            stats = ndx_data.get_current_price() # 这是一个字典
+            
+            # 尝试获取 trailing_pe
+            # 注意：yahoofinancials 返回的是嵌套字典，或者直接在 stats 里
+            # 有时候 PE 在 summary_detail 里
+            summary = ndx_data.get_summary_data()
+            
+            if summary and 'trailing_pe' in summary:
+                current_pe = summary['trailing_pe']
+                pe_source = "Yahoo (^NDX) Direct"
+                print(f"✅ 成功获取指数 PE: {current_pe}")
+            else:
+                # 如果 ^NDX 还是没有，说明 Yahoo 对指数屏蔽了 PE，必须用 QQQ
+                raise ValueError("Yahoo 指数数据无 PE，切换 QQQ")
+                
+        except Exception as e_yahoo:
+            print(f"❌ Yahoo 直接获取失败: {e_yahoo}，切换到 QQQ...")
+            
+            # --- 备选方案：QQQ ---
+            try:
+                ticker_qqq = yf.Ticker("QQQ")
+                info_qqq = ticker_qqq.info
+                # 兼容新旧版本 yfinance
+                qqq_pe = info_qqq.get('trailingPE') or info_qqq.get('trailing_pe')
+                
+                if qqq_pe:
+                    current_pe = qqq_pe
+                    pe_source = "QQQ ETF"
+                    print(f"✅ 成功从 QQQ 获取 PE: {current_pe}")
+                else:
+                    print("⚠️ QQQ 也无 PE 数据")
+                    
+            except Exception as e_qqq:
+                print(f"❌ QQQ 获取失败: {e_qqq}")
 
         # --- 3. 计算均线 ---
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
