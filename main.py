@@ -12,19 +12,28 @@ def get_stock_data_and_send_email():
         # 获取过去1年多的数据，确保能计算均线
         hist_data = ticker.history(period="15mo")
         if hist_data.empty:
-            print("获取数据失败")
+            print("获取历史K线数据失败")
             return
             
-        # 获取实时估值信息 (关键新增)
+        # --- 获取 PE 数据 (已修复) ---
         info = ticker.info
-        # 获取市盈率 (PE-TTM)
-        # 如果无法获取PE，设为 9999 (代替之前的 inf)
-        current_pe = info.get('trailingPE', 9999) 
+        
+        # 1. 尝试使用新版本的 key: 'trailing_pe'
+        # 2. 如果失败，尝试旧版本的 key: 'trailingPE'
+        # 3. 如果都失败，使用兜底值 9999
+        current_pe = info.get('trailing_pe') or info.get('trailingPE') or 9999
+
+        # --- 调试日志：如果获取失败，打印所有包含 'pe' 的字段 ---
+        if current_pe == 9999:
+            print("⚠️ 警告：未能通过 'trailing_pe' 或 'trailingPE' 获取数据。")
+            print("🔍 正在扫描 info 中所有包含 'pe' 的字段，请检查下方输出：")
+            for key, value in info.items():
+                if 'pe' in key.lower():
+                    print(f"   发现疑似字段: {key} = {value}")
+            print("-" * 30)
 
         # --- 2. 计算均线 ---
-        # 计算 MA120 (半年线)
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
-        # 计算 MA250 (年线)
         hist_data['MA250'] = hist_data['Close'].rolling(window=250).mean()
 
         # 获取最新数据
@@ -37,7 +46,6 @@ def get_stock_data_and_send_email():
         days_below_120 = 0
         days_below_250 = 0
 
-        # 1. 计算跌破 MA120 天数
         if current_price < current_ma120:
             for i in range(len(hist_data)):
                 row = hist_data.iloc[-(i+1)]
@@ -46,7 +54,6 @@ def get_stock_data_and_send_email():
                 else:
                     break
 
-        # 2. 计算跌破 MA250 天数
         if current_price < current_ma250:
             for i in range(len(hist_data)):
                 row = hist_data.iloc[-(i+1)]
@@ -55,18 +62,17 @@ def get_stock_data_and_send_email():
                 else:
                     break
 
-        # --- 4. 核心策略逻辑 (双因子：均线 + 估值) ---
+        # --- 4. 核心策略逻辑 ---
         strategy_status = ""
         money_amount = 0
         reasoning = ""
 
-        # 优先级最高：跌破年线 且 估值回归合理 (PE < 30)
+        # 逻辑判断
         if current_price < current_ma250 and current_pe < 30:
             strategy_status = "【激进加仓】"
             money_amount = 800
             reasoning = f"逻辑：跌破年线且估值(PE={current_pe:.2f})进入安全区，重仓抄底。"
         
-        # 中间档：跌破半年线 或 跌破年线但估值依然偏高 (PE >= 30)
         elif current_price < current_ma120 or (current_price < current_ma250 and current_pe >= 30):
             strategy_status = "【标准定投】"
             money_amount = 400
@@ -75,34 +81,27 @@ def get_stock_data_and_send_email():
             else:
                 reasoning = "逻辑：处于半年线下方调整期，维持标准投入。"
         
-        # 保守档：在半年线上方 (趋势行情)
         else:
             strategy_status = "【保守观望】"
             money_amount = 200
             reasoning = f"逻辑：趋势向好但当前估值(PE={current_pe:.2f})较贵，低额维持。"
 
         # --- 5. 构建邮件内容 ---
+        # 显示处理：如果是9999，显示为“数据异常”，否则显示数值
+        display_pe = "数据异常" if current_pe == 9999 else f"{current_pe:.2f}"
+        
         message_body = f"📅 日期: {date_str}\n"
         message_body += f"📈 标的: 纳斯达克100指数 (^NDX)\n"
         message_body += f"💰 当前点位: {current_price:.2f}\n"
-        
-        # 修改这里：如果 PE 是 9999，显示为 "数据异常/极高"
-        display_pe = "数据异常" if current_pe == 9999 else f"{current_pe:.2f}"
         message_body += f"📊 当前市盈率(PE-TTM): {display_pe}\n"
-        
         message_body += "-" * 40 + "\n"
-        
-        # 显示均线数据与状态
         message_body += f"📉 MA250 (年线): {current_ma250:.2f} (已跌破{days_below_250}天)\n"
         message_body += f"📉 MA120 (半年线): {current_ma120:.2f} (已跌破{days_below_120}天)\n"
         message_body += "-" * 40 + "\n"
-        
-        # 突出显示最终策略
         message_body += f"🚀 今日策略: {strategy_status}\n"
         message_body += f"💰 每日定投金额: 【{money_amount} 元】\n"
         message_body += f"💡 策略依据: {reasoning}"
 
-        # 邮件标题
         subject = f"📊 纳指100定投提醒: {strategy_status} - {money_amount}元"
         print(f"分析完成:\n{message_body}")
         send_email(subject, message_body)
@@ -113,8 +112,6 @@ def get_stock_data_and_send_email():
         send_email("❌ 股票分析脚本运行错误", error_msg)
 
 def send_email(subject, body):
-    # --- 6. 邮件发送配置 ---
-    # 请确保在系统环境变量中配置了以下信息
     smtp_server = os.getenv("SMTP_SERVER")
     smtp_port = int(os.getenv("SMTP_PORT"))
     email_user = os.getenv("EMAIL_USER")
