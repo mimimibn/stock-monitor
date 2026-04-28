@@ -28,21 +28,30 @@ def get_stock_data_and_send_email():
         date_str = hist_data.index[-1].strftime('%Y-%m-%d')
         
         # --- 3. 计算连续跌破天数 ---
-        # 逻辑：从最后一天往前数，只要收盘价 < 均线，计数+1
+        # 修复逻辑：必须先判断“今天”是否在下方。如果“今天”在上方，天数直接为0。
+        
         days_below_120 = 0
         days_below_250 = 0
         
-        # 倒序遍历数据（从最新的一天往前推）
-        for i in range(len(hist_data)):
-            row = hist_data.iloc[-(i+1)]
-            
-            # 计算 MA120 跌破天数
-            if row['Close'] < row['MA120']:
-                days_below_120 += 1
-            
-            # 计算 MA250 跌破天数
-            if row['Close'] < row['MA250']:
-                days_below_250 += 1
+        # 1. 先判断 MA120
+        # 只有当今天收盘价 < MA120 时，才开始数天数
+        if current_price < current_ma120:
+            for i in range(len(hist_data)):
+                row = hist_data.iloc[-(i+1)]
+                if row['Close'] < row['MA120']:
+                    days_below_120 += 1
+                else:
+                    break # 一旦遇到一天在均线上方，计数停止
+        
+        # 2. 再判断 MA250
+        # 只有当今天收盘价 < MA250 时，才开始数天数
+        if current_price < current_ma250:
+            for i in range(len(hist_data)):
+                row = hist_data.iloc[-(i+1)]
+                if row['Close'] < row['MA250']:
+                    days_below_250 += 1
+                else:
+                    break # 一旦遇到一天在均线上方，计数停止
 
         # --- 4. 核心策略逻辑 ---
         strategy_status = ""
