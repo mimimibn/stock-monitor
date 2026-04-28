@@ -2,43 +2,66 @@ import yfinance as yf
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
-from email.header import Header
 import os
-from datetime import datetime
 
 def get_stock_data_and_send_email():
     # --- 1. 获取股票数据 ---
     try:
         ticker = yf.Ticker("^NDX")
-        # 获取历史数据
-        hist_data = ticker.history(period="6mo")
+        # 获取过去1年的数据，确保包含至少250个交易日
+        hist_data = ticker.history(period="1y")
         
         if hist_data.empty:
             print("获取数据失败")
             return
 
-        # 计算 MA120
+        # --- 2. 计算均线 ---
+        # 计算 MA120 (半年线)
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
         
+        # 计算 MA250 (年线)
+        hist_data['MA250'] = hist_data['Close'].rolling(window=250).mean()
+
+        # 获取最新数据
         current_price = hist_data['Close'].iloc[-1]
         current_ma120 = hist_data['MA120'].iloc[-1]
+        current_ma250 = hist_data['MA250'].iloc[-1]
         date_str = hist_data.index[-1].strftime('%Y-%m-%d')
         
-        # --- 2. 判断逻辑 ---
+        # --- 3. 核心策略逻辑判断 ---
+        # 默认状态
+        strategy_status = "未知状态"
+        
+        # 逻辑优先级：先看年线，再看半年线，最后是高位
+        if current_price < current_ma250:
+            # 情况1：低于年线（深度低估）
+            strategy_status = "1.5倍定投"
+        elif current_price < current_ma120:
+            # 情况2：低于半年线，但高于年线（相对低估）
+            strategy_status = "1倍定投"
+        elif current_price > current_ma120 and current_price > current_ma250:
+            # 情况3：高于所有均线（高估区域）
+            strategy_status = "0.5倍定投"
+        else:
+            # 边缘情况：介于两者之间（通常不会发生，除非均线纠缠）
+            strategy_status = "1倍定投"
+
+        # --- 4. 构建邮件内容 ---
         message_body = f"日期: {date_str}\n"
         message_body += f"标的: 纳斯达克100指数 (^NDX)\n"
         message_body += f"当前点位: {current_price:.2f}\n"
-        message_body += f"MA120点位: {current_ma120:.2f}\n"
         message_body += "-" * 30 + "\n"
+        
+        # 显示均线数据供参考
+        message_body += f"A250 (年线): {current_ma250:.2f}\n"
+        message_body += f"MA120 (半年线): {current_ma120:.2f}\n"
+        message_body += "-" * 30 + "\n"
+        
+        # 突出显示最终策略
+        message_body += f"今日策略: 【 {strategy_status} 】"
 
-        if current_price < current_ma120:
-            # 触发加仓信号
-            message_body += f"当前MA120点位为：{current_ma120:.2f}，纳斯达克100指数点位为：{current_price:.2f}，该加仓了"
-            subject = "纳斯达克100加仓信号提醒"
-        else:
-            # 正常汇报
-            message_body += "当前指数位于MA120上方，继续持有或观望。"
-            subject = "纳斯达克100每日均线日报"
+        # 邮件标题
+        subject = f"纳指100定投提醒: {strategy_status}"
 
         print(f"分析完成:\n{message_body}")
         send_email(subject, message_body)
@@ -49,7 +72,7 @@ def get_stock_data_and_send_email():
         send_email("股票分析脚本运行错误", error_msg)
 
 def send_email(subject, body):
-    # --- 3. 邮件发送配置 ---
+    # --- 5. 邮件发送配置 ---
     smtp_server = os.getenv("SMTP_SERVER")
     smtp_port = int(os.getenv("SMTP_PORT"))
     email_user = os.getenv("EMAIL_USER")
@@ -61,20 +84,11 @@ def send_email(subject, body):
         return
 
     try:
-        # 1. 构建邮件对象
         msg = MIMEText(body, 'plain', 'utf-8')
-        
-        # 2. 修复关键点：严格遵守 RFC5322 标准
-        # 方案A：如果邮箱用户名是纯英文/数字，使用：Display Name <email@address>
-        # 方案B：如果包含中文，或者为了绝对安全，直接使用纯邮箱地址
-        # 这里我们采用最稳妥的方案：直接使用纯邮箱地址作为 From (避免中文编码问题)
-        msg['From'] = email_user  # 直接赋值邮箱，不加昵称
-        
-        # 3. 设置收件人和主题
+        msg['From'] = email_user
         msg['To'] = email_receiver
         msg['Subject'] = subject
 
-        # 4. 发送逻辑 (保持不变)
         server = smtplib.SMTP_SSL(smtp_server, smtp_port)
         server.login(email_user, email_pass)
         server.sendmail(email_user, [email_receiver], msg.as_string())
