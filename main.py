@@ -1,6 +1,5 @@
 import yfinance as yf
 import pandas as pd
-import pandas_datareader as pdr
 import smtplib
 from email.mime.text import MIMEText
 import os
