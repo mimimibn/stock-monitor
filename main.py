@@ -53,7 +53,7 @@ def get_stock_data_and_send_email():
         message_body += "-" * 30 + "\n"
         
         # 显示均线数据供参考
-        message_body += f"A250 (年线): {current_ma250:.2f}\n"
+        message_body += f"MA250 (年线): {current_ma250:.2f}\n"
         message_body += f"MA120 (半年线): {current_ma120:.2f}\n"
         message_body += "-" * 30 + "\n"
         
