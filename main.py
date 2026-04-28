@@ -121,7 +121,8 @@ def send_email(subject, body):
 
     try:
         msg = MIMEText(body, 'plain', 'utf-8')
-        msg['From'] = email_user
+        # msg['From'] = email_user
+        msg['From'] = f"=?UTF-8?B?5L2T5piv5bCP5aSp5Li6?= <{email_user}>"
         msg['To'] = email_receiver
         msg['Subject'] = subject
 
