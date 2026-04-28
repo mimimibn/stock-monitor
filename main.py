@@ -50,11 +50,10 @@ def get_stock_data_and_send_email():
 
 def send_email(subject, body):
     # --- 3. 邮件发送配置 ---
-    # 从 GitHub Secrets 获取环境变量
     smtp_server = os.getenv("SMTP_SERVER")
     smtp_port = int(os.getenv("SMTP_PORT"))
     email_user = os.getenv("EMAIL_USER")
-    email_pass = os.getenv("EMAIL_PASS") # 这里填授权码
+    email_pass = os.getenv("EMAIL_PASS")
     email_receiver = os.getenv("EMAIL_RECEIVER")
 
     if not all([smtp_server, email_user, email_pass, email_receiver]):
@@ -62,16 +61,26 @@ def send_email(subject, body):
         return
 
     try:
+        # 1. 构建邮件对象
         msg = MIMEText(body, 'plain', 'utf-8')
-        msg['From'] = Header(f"GitHub Actions <{email_user}>", 'utf-8')
-        msg['To'] = Header(f"Me <{email_receiver}>", 'utf-8')
-        msg['Subject'] = Header(subject, 'utf-8')
+        
+        # 2. 修复关键点：严格遵守 RFC5322 标准
+        # 方案A：如果邮箱用户名是纯英文/数字，使用：Display Name <email@address>
+        # 方案B：如果包含中文，或者为了绝对安全，直接使用纯邮箱地址
+        # 这里我们采用最稳妥的方案：直接使用纯邮箱地址作为 From (避免中文编码问题)
+        msg['From'] = email_user  # 直接赋值邮箱，不加昵称
+        
+        # 3. 设置收件人和主题
+        msg['To'] = email_receiver
+        msg['Subject'] = subject
 
+        # 4. 发送逻辑 (保持不变)
         server = smtplib.SMTP_SSL(smtp_server, smtp_port)
         server.login(email_user, email_pass)
         server.sendmail(email_user, [email_receiver], msg.as_string())
         server.quit()
         print(f"邮件发送成功 -> {email_receiver}")
+        
     except Exception as e:
         print(f"邮件发送失败: {str(e)}")
 
