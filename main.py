@@ -20,49 +20,20 @@ def get_stock_data_and_send_email():
         date_str = hist_data.index[-1].strftime('%Y-%m-%d')
 
         # --- 2. 获取 PE 数据 (改用 QQQ 的 PE) ---
-        current_pe = 9999
-        pe_source = "UNKNOWN"
-    
-        try:
-            print("🔍 正在尝试从 Nasdaq Data Link 获取指数 PE...")
-            
-            # 尝试获取纳斯达克100的市盈率数据
-            # 注意：这里使用的是 Nasdaq 官方提供的数据源代号
-            # 如果具体代号变动，通常可以使用 'MULTPL/NASDAQ100_PE_RATIO_MONTH'
-            try:
-                # 这是一个常用的公开数据集代号
-                df = pdr.DataReader('NASDAQ100_PE_RATIO', 'nasdaq', start=time.strftime('%Y-%m-%d'))
-                # 获取最新的一条数据
-                if not df.empty:
-                    current_pe = df.iloc[-1]['Value']
-                    pe_source = "Nasdaq Data Link"
-                    print(f"✅ 成功从 Nasdaq 获取 PE: {current_pe}")
-            except:
-                # 如果具体指数 PE 接口变动，回退到 Fred 获取 Shiller PE (席勒市盈率)
-                # 席勒市盈率是宏观分析常用的指标
-                print("⚠️ 具体 PE 接口不可用，尝试获取席勒市盈率...")
-                # Fred 数据通常有延迟，但趋势一致
-                # 代码仅为示意，Fred 通常不直接提供 NDX 的实时 PE
-                
-                raise Exception("接口暂不可用，切换备选方案")
-    
-        except Exception as e_nasdaq:
-            print(f"❌ Nasdaq 数据源获取失败: {e_nasdaq}，切换到 QQQ 备选...")
-            
-            # --- 备选方案：QQQ ---
-            try:
-                ticker_qqq = yf.Ticker("QQQ")
-                info_qqq = ticker_qqq.info
-                qqq_pe = info_qqq.get('trailingPE') or info_qqq.get('trailing_pe')
-                if qqq_pe:
-                    current_pe = qqq_pe
-                    pe_source = "QQQ ETF"
-                    print(f"✅ 使用备选方案 QQQ PE: {current_pe}")
-            except:
-                print("❌ 所有 PE 数据源均失败")
-    
-        # --- 3. 打印结果 ---
-        print(f"📊 最终采用 PE: {current_pe:.2f} (来源: {pe_source})")
+        # 原因：^NDX 是指数，没有 PE 字段。QQQ 是追踪该指数的 ETF，有 PE 数据且高度相关。
+        ticker_qqq = yf.Ticker("QQQ")
+        info_qqq = ticker_qqq.info
+        
+        # 尝试获取 QQQ 的滚动市盈率
+        # 优先级：trailing_pe (新版库) > trailingPE (旧版库) > 9999 (兜底)
+        current_pe = info_qqq.get('trailing_pe') or info_qqq.get('trailingPE') or 9999
+        
+        # 调试打印
+        if current_pe == 9999:
+            print(f"⚠️ 警告：QQQ 的 PE 获取失败，当前值: {current_pe}")
+        else:
+            print(f"✅ 成功从 QQQ 获取 PE: {current_pe}")
+
 
         # --- 3. 计算均线 ---
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
