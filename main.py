@@ -5,44 +5,42 @@ from email.mime.text import MIMEText
 import os
 
 def get_stock_data_and_send_email():
-    # --- 1. 获取股票数据 ---
+    # --- 1. 获取股票数据 (用于计算均线) ---
     try:
-        ticker = yf.Ticker("^NDX")
+        ticker_ndx = yf.Ticker("^NDX") # 用于获取价格和均线
         
-        # 获取过去1年多的数据，确保能计算均线
-        hist_data = ticker.history(period="15mo")
+        # 获取过去1年多的数据
+        hist_data = ticker_ndx.history(period="15mo")
         if hist_data.empty:
-            print("获取历史K线数据失败")
+            print("获取 ^NDX 数据失败")
             return
             
-        # --- 获取 PE 数据 (已修复) ---
-        info = ticker.info
+        current_price = hist_data['Close'].iloc[-1]
+        date_str = hist_data.index[-1].strftime('%Y-%m-%d')
+
+        # --- 2. 获取 PE 数据 (改用 QQQ 的 PE) ---
+        # 原因：^NDX 是指数，没有 PE 字段。QQQ 是追踪该指数的 ETF，有 PE 数据且高度相关。
+        ticker_qqq = yf.Ticker("QQQ")
+        info_qqq = ticker_qqq.info
         
-        # 1. 尝试使用新版本的 key: 'trailing_pe'
-        # 2. 如果失败，尝试旧版本的 key: 'trailingPE'
-        # 3. 如果都失败，使用兜底值 9999
-        current_pe = info.get('trailing_pe') or info.get('trailingPE') or 9999
-
-        # --- 调试日志：如果获取失败，打印所有包含 'pe' 的字段 ---
+        # 尝试获取 QQQ 的滚动市盈率
+        # 优先级：trailing_pe (新版库) > trailingPE (旧版库) > 9999 (兜底)
+        current_pe = info_qqq.get('trailing_pe') or info_qqq.get('trailingPE') or 9999
+        
+        # 调试打印
         if current_pe == 9999:
-            print("⚠️ 警告：未能通过 'trailing_pe' 或 'trailingPE' 获取数据。")
-            print("🔍 正在扫描 info 中所有包含 'pe' 的字段，请检查下方输出：")
-            for key, value in info.items():
-                if 'pe' in key.lower():
-                    print(f"   发现疑似字段: {key} = {value}")
-            print("-" * 30)
+            print(f"⚠️ 警告：QQQ 的 PE 获取失败，当前值: {current_pe}")
+        else:
+            print(f"✅ 成功从 QQQ 获取 PE: {current_pe}")
 
-        # --- 2. 计算均线 ---
+        # --- 3. 计算均线 ---
         hist_data['MA120'] = hist_data['Close'].rolling(window=120).mean()
         hist_data['MA250'] = hist_data['Close'].rolling(window=250).mean()
 
-        # 获取最新数据
-        current_price = hist_data['Close'].iloc[-1]
         current_ma120 = hist_data['MA120'].iloc[-1]
         current_ma250 = hist_data['MA250'].iloc[-1]
-        date_str = hist_data.index[-1].strftime('%Y-%m-%d')
 
-        # --- 3. 计算连续跌破天数 ---
+        # --- 4. 计算连续跌破天数 ---
         days_below_120 = 0
         days_below_250 = 0
 
@@ -62,7 +60,7 @@ def get_stock_data_and_send_email():
                 else:
                     break
 
-        # --- 4. 核心策略逻辑 ---
+        # --- 5. 核心策略逻辑 ---
         strategy_status = ""
         money_amount = 0
         reasoning = ""
@@ -86,14 +84,13 @@ def get_stock_data_and_send_email():
             money_amount = 200
             reasoning = f"逻辑：趋势向好但当前估值(PE={current_pe:.2f})较贵，低额维持。"
 
-        # --- 5. 构建邮件内容 ---
-        # 显示处理：如果是9999，显示为“数据异常”，否则显示数值
+        # --- 6. 构建邮件内容 ---
         display_pe = "数据异常" if current_pe == 9999 else f"{current_pe:.2f}"
         
         message_body = f"📅 日期: {date_str}\n"
         message_body += f"📈 标的: 纳斯达克100指数 (^NDX)\n"
         message_body += f"💰 当前点位: {current_price:.2f}\n"
-        message_body += f"📊 当前市盈率(PE-TTM): {display_pe}\n"
+        message_body += f"📊 参考PE (来自QQQ): {display_pe}\n" # 修改文案
         message_body += "-" * 40 + "\n"
         message_body += f"📉 MA250 (年线): {current_ma250:.2f} (已跌破{days_below_250}天)\n"
         message_body += f"📉 MA120 (半年线): {current_ma120:.2f} (已跌破{days_below_120}天)\n"
