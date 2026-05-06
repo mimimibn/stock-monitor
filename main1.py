@@ -32,9 +32,9 @@ def get_danjuan_valuation():
         return {"success": False, "msg": str(e)}
 
 def determine_strategy(pe_percentile):
-    if pe_percentile >= 80:
+    if pe_percentile >= 90:
         return {"action": "【极度高估 - 暂停定投】", "amount": 0}
-    elif pe_percentile >= 60:
+    elif pe_percentile >= 70:
         return {"action": "【适中区域】", "amount": 200}
     elif pe_percentile >= 40:
         return {"action": "【标准定投】", "amount": 500}
