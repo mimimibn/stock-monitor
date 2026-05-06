@@ -37,11 +37,11 @@ def determine_strategy(pe_percentile):
     elif pe_percentile >= 60:
         return {"action": "【适中区域】", "amount": 200}
     elif pe_percentile >= 40:
-        return {"action": "【标准定投】", "amount": 400}
+        return {"action": "【标准定投】", "amount": 500}
     elif pe_percentile >= 20:
-        return {"action": "【低估区域】", "amount": 800}
+        return {"action": "【低估区域】", "amount": 1000}
     else:
-        return {"action": "【深度低估 - 重仓买入】", "amount": 1000}
+        return {"action": "【深度低估 - 重仓买入】", "amount": 2000}
 
 def send_email(subject, body):
     smtp_server = os.getenv("SMTP_SERVER")
